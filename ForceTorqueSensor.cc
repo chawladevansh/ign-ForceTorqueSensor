@@ -35,35 +35,23 @@
 using namespace ignition;
 using namespace sensors;
 
-/// \brief Private data for ImuSensor
+/// \brief Private data for ForceTorqueSensor
 class ignition::sensors::ForceTorqueSensorPrivate
 {
   /// \brief node to create publisher
   public: transport::Node node;
 
-  /// \brief publisher to publish imu messages.
+  /// \brief publisher to publish Wrench messages.
   public: transport::Node::Publisher pub;
 
   /// \brief true if Load() has been called and was successful
   public: bool initialized = false;
 
-  /// \brief Noise free linear acceleration
-  public: ignition::math::Vector3d linearAcc;
+  /// \brief Noise free force.
+  public: ignition::math::Vector3d force;
 
-  /// \brief Noise free angular velocity.
-  public: ignition::math::Vector3d angularVel;
-
-  /// \brief transform to Imu orientation reference frame.
-  public: ignition::math::Quaterniond orientationReference;
-
-  /// \brief transform to Imu frame from Imu reference frame.
-  public: ignition::math::Quaterniond orientation;
-
-  /// \brief store gravity vector to be added to the IMU output.
-  public: ignition::math::Vector3d gravity;
-
-  /// \brief World pose of the imu sensor
-  public: ignition::math::Pose3d worldPose;
+  /// \brief Noise free torque.
+  public: ignition::math::Vector3d torque;
 
   /// \brief Flag for if time has been initialized
   public: bool timeInitialized = false;
@@ -72,8 +60,6 @@ class ignition::sensors::ForceTorqueSensorPrivate
   public: std::chrono::steady_clock::duration prevStep
     {std::chrono::steady_clock::duration::zero()};
 
-  /// \brief Noise added to sensor data
-  public: std::map<SensorNoiseType, NoisePtr> noises;
 };
 
 //////////////////////////////////////////////////
@@ -100,7 +86,7 @@ bool ForceTorqueSensor::Load(const sdf::Sensor &_sdf)
     return false;
 
   // Check if this is the right type
-  if (_sdf.Type() != sdf::SensorType::IMU)
+  if (_sdf.Type() != sdf::SensorType::FORCETORQUE)
   {
     ignerr << "Attempting to a load a Force Torque sensor, but received "
       << "a " << _sdf.TypeStr() << std::endl;
@@ -117,7 +103,7 @@ bool ForceTorqueSensor::Load(const sdf::Sensor &_sdf)
     this->SetTopic("/forcetorque");
 
   this->dataPtr->pub =
-      this->dataPtr->node.Advertise<ignition::msgs::IMU>(this->Topic());
+      this->dataPtr->node.Advertise<ignition::msgs::Wrench>(this->Topic());
 
   if (!this->dataPtr->pub)
   {
@@ -125,29 +111,12 @@ bool ForceTorqueSensor::Load(const sdf::Sensor &_sdf)
     return false;
   }
 
-  const std::map<SensorNoiseType, sdf::Noise> noises = {
-    {ACCELEROMETER_X_NOISE_M_S_S, _sdf.ImuSensor()->LinearAccelerationXNoise()},
-    {ACCELEROMETER_Y_NOISE_M_S_S, _sdf.ImuSensor()->LinearAccelerationYNoise()},
-    {ACCELEROMETER_Z_NOISE_M_S_S, _sdf.ImuSensor()->LinearAccelerationZNoise()},
-    {GYROSCOPE_X_NOISE_RAD_S, _sdf.ImuSensor()->AngularVelocityXNoise()},
-    {GYROSCOPE_Y_NOISE_RAD_S, _sdf.ImuSensor()->AngularVelocityYNoise()},
-    {GYROSCOPE_Z_NOISE_RAD_S, _sdf.ImuSensor()->AngularVelocityZNoise()},
-  };
-
-  for (const auto & [noiseType, noiseSdf] : noises)
-  {
-    if (noiseSdf.Type() != sdf::NoiseType::NONE)
-    {
-      this->dataPtr->noises[noiseType] = NoiseFactory::NewNoiseModel(noiseSdf);
-    }
-  }
-
   this->dataPtr->initialized = true;
   return true;
 }
 
 //////////////////////////////////////////////////
-bool ImuSensor::Load(sdf::ElementPtr _sdf)
+bool ForceTorqueSensor::Load(sdf::ElementPtr _sdf)
 {
   sdf::Sensor sdfSensor;
   sdfSensor.Load(_sdf);
@@ -155,16 +124,16 @@ bool ImuSensor::Load(sdf::ElementPtr _sdf)
 }
 
 //////////////////////////////////////////////////
-bool ImuSensor::Update(
+bool ForceTorqueSensor::Update(
   const ignition::common::Time &_now)
 {
   return this->Update(math::secNsecToDuration(_now.sec, _now.nsec));
 }
 
 //////////////////////////////////////////////////
-bool ImuSensor::Update(const std::chrono::steady_clock::duration &_now)
+bool ForceTorqueSensor::Update(const std::chrono::steady_clock::duration &_now)
 {
-  IGN_PROFILE("ImuSensor::Update");
+  IGN_PROFILE("ForceTorqueSensor::Update");
   if (!this->dataPtr->initialized)
   {
     ignerr << "Not initialized, update ignored.\n";
@@ -190,43 +159,27 @@ bool ImuSensor::Update(const std::chrono::steady_clock::duration &_now)
     dt = 0.0;
   }
 
-  // Add contribution from gravity
-  // Skip if gravity is not enabled?
-  this->dataPtr->linearAcc -=
-      this->dataPtr->worldPose.Rot().Inverse().RotateVector(
-      this->dataPtr->gravity);
 
-  // Convenience method to apply noise to a channel, if present.
-  auto applyNoise = [&](SensorNoiseType noiseType, double & value)
-  {
-    if (this->dataPtr->noises.find(noiseType) != this->dataPtr->noises.end()) {
-      value = this->dataPtr->noises[noiseType]->Apply(value, dt);
-    }
-  };
+  /// TODO : stuff
 
-  applyNoise(ACCELEROMETER_X_NOISE_M_S_S, this->dataPtr->linearAcc.X());
-  applyNoise(ACCELEROMETER_Y_NOISE_M_S_S, this->dataPtr->linearAcc.Y());
-  applyNoise(ACCELEROMETER_Z_NOISE_M_S_S, this->dataPtr->linearAcc.Z());
-  applyNoise(GYROSCOPE_X_NOISE_RAD_S, this->dataPtr->angularVel.X());
-  applyNoise(GYROSCOPE_Y_NOISE_RAD_S, this->dataPtr->angularVel.Y());
-  applyNoise(GYROSCOPE_Z_NOISE_RAD_S, this->dataPtr->angularVel.Z());
 
-  // Set the IMU orientation
-  // imu orientation with respect to reference frame
-  this->dataPtr->orientation =
-      this->dataPtr->orientationReference.Inverse() *
-      this->dataPtr->worldPose.Rot();
-
-  msgs::IMU msg;
+  msgs::Wrench msg;
   *msg.mutable_header()->mutable_stamp() = msgs::Convert(_now);
   msg.set_entity_name(this->Name());
   auto frame = msg.mutable_header()->add_data();
   frame->set_key("frame_id");
   frame->add_value(this->Name());
 
-  msgs::Set(msg.mutable_orientation(), this->dataPtr->orientation);
-  msgs::Set(msg.mutable_angular_velocity(), this->dataPtr->angularVel);
-  msgs::Set(msg.mutable_linear_acceleration(), this->dataPtr->linearAcc);
+  /// TODO :  ***
+  /* 
+    - add noise
+    - check frame orientation
+    - populate the message
+    - publish
+  */
+
+  msgs::Set(msg.mutable_force(), this->dataPtr->force);
+  msgs::Set(msg.mutable_torque(), this->dataPtr->torque);
 
   // publish
   this->AddSequence(msg.mutable_header());
@@ -237,69 +190,28 @@ bool ImuSensor::Update(const std::chrono::steady_clock::duration &_now)
 }
 
 //////////////////////////////////////////////////
-void ImuSensor::SetAngularVelocity(const math::Vector3d &_angularVel)
+math::Vector3d ForceTorqueSensor::Force() const
 {
-  this->dataPtr->angularVel = _angularVel;
+  return this->dataPtr->force;
 }
 
 //////////////////////////////////////////////////
-math::Vector3d ImuSensor::AngularVelocity() const
+void ForceTorqueSensor::SetForce(const math::Vector3d &_force)
 {
-  return this->dataPtr->angularVel;
+  this->dataPtr->force = _force;
 }
 
 //////////////////////////////////////////////////
-void ImuSensor::SetLinearAcceleration(const math::Vector3d &_linearAcc)
+math::Vector3d ImuSensor::Torque() const
 {
-  this->dataPtr->linearAcc = _linearAcc;
+  return this->dataPtr->torque;
 }
 
 //////////////////////////////////////////////////
-math::Vector3d ImuSensor::LinearAcceleration() const
+void ImuSensor::SetTorque(const math::Vector3d &_torque)
 {
-  return this->dataPtr->linearAcc;
+  this->dataPtr->torque = _torque;
 }
 
-//////////////////////////////////////////////////
-void ImuSensor::SetWorldPose(const math::Pose3d _pose)
-{
-  this->dataPtr->worldPose = _pose;
-}
 
-//////////////////////////////////////////////////
-math::Pose3d ImuSensor::WorldPose() const
-{
-  return this->dataPtr->worldPose;
-}
-
-//////////////////////////////////////////////////
-void ImuSensor::SetOrientationReference(const math::Quaterniond &_orient)
-{
-  this->dataPtr->orientationReference = _orient;
-}
-
-//////////////////////////////////////////////////
-math::Quaterniond ImuSensor::OrientationReference() const
-{
-  return this->dataPtr->orientationReference;
-}
-
-//////////////////////////////////////////////////
-void ImuSensor::SetGravity(const math::Vector3d &_gravity)
-{
-  this->dataPtr->gravity = _gravity;
-}
-
-//////////////////////////////////////////////////
-math::Vector3d ImuSensor::Gravity() const
-{
-  return this->dataPtr->gravity;
-}
-
-//////////////////////////////////////////////////
-math::Quaterniond ImuSensor::Orientation() const
-{
-  return this->dataPtr->orientation;
-}
-
-IGN_SENSORS_REGISTER_SENSOR(ImuSensor)
+IGN_SENSORS_REGISTER_SENSOR(ForceTorqueSensor)

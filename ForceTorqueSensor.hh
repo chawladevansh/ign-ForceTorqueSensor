@@ -27,8 +27,7 @@
 
 #include <ignition/sensors/config.hh>
 
-
-#include <ignition/sensors/forcetorque/Export.hh>  // ***** not sure *****
+#include <ignition/sensors/forcetorque/Export.hh>
 
 #include "ignition/sensors/Sensor.hh"
 
@@ -44,7 +43,7 @@ namespace ignition
 
     /// \brief Imu Sensor Class
     ///
-    /// An imu sensor that reports linear acceleration, angular velocity, and
+    /// An imu sensor that reports linear acceleration, angular velocity, and // TODO ***
     /// orientation
     class IGNITION_SENSORS_FORCETORQUE_VISIBLE ForceTorqueSensor : public Sensor
     {
@@ -79,8 +78,16 @@ namespace ignition
       /// \return true if the update was successfull
       public: virtual bool Update(
         const std::chrono::steady_clock::duration &_now) override;
-    
+
       
+      public: math::Vector3d Force() const;
+
+      public: void SetForce(const math::Vector3d &_force);
+
+      public: math::Vector3d Torque() const;
+
+      public: void SetTorque(const math::Vector3d &_torque);
+    
 
       IGN_COMMON_WARN_IGNORE__DLL_INTERFACE_MISSING
       /// \brief Data pointer for private data
